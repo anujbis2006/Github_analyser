@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RepoLens — GitHub Analyser</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+</head>
+<link rel="stylesheet" href="style.css">
+<body class="locked">
+
+
+<div id="authOverlay">
+  <div id="authBackdrop"></div>
+
+  <div id="authModal">
+    
+    <div class="auth-header">
+      <div class="auth-logo-icon">◈</div>
+      <div class="auth-brand">Repo<span>Lens</span></div>
+    </div>
+
+    
+    <div id="loginPanel" class="auth-panel">
+      <div class="auth-title">Welcome back</div>
+      <div class="auth-subtitle">Sign in to access the analyser</div>
+      <div class="auth-divider"></div>
+      <div class="auth-body">
+        <div class="auth-error" id="loginError"><span>⚠</span><span id="loginErrorText">Invalid credentials</span></div>
+        <div class="auth-field">
+          <label class="auth-label" for="loginUser">USERNAME</label>
+          <input class="auth-input" type="text" id="loginUser" placeholder="Enter username" autocomplete="username" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-label" for="loginPass">PASSWORD</label>
+          <input class="auth-input" type="password" id="loginPass" placeholder="Enter password" autocomplete="current-password" />
+        </div>
+        <button class="btn-auth-primary" id="loginBtn">LOGIN →</button>
+        <button class="btn-auth-secondary" id="goSignupBtn">Create an account</button>
+        <div class="auth-hint">
+           user: <code>Pankaj</code> &nbsp;/&nbsp; pass: <code>Pankaj</code>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="signupPanel" class="auth-panel hidden">
+      <div class="auth-title">Create account</div>
+      <div class="auth-subtitle">Set up your RepoLens access</div>
+      <div class="auth-divider"></div>
+      <div class="auth-body">
+       
+        <div class="auth-field">
+          <label class="auth-label" for="signupUser">CREATE USERNAME</label>
+          <input class="auth-input" type="text" id="signupUser" placeholder="Choose a username" autocomplete="username" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-label" for="signupPass">CREATE PASSWORD</label>
+          <input class="auth-input" type="password" id="signupPass" placeholder="Choose a password" autocomplete="new-password" />
+        </div>
+        <div class="auth-error hidden" id="signupError"><span>⚠</span><span id="signupErrorText">Please fill in all fields</span></div>
+        <button class="btn-auth-primary" id="signupBtn">SIGN UP →</button>
+        <button class="btn-auth-secondary" id="goLoginBtn">← Back to Login</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+<div class="container">
+  <header>
+    <div class="logo"><div class="logo-icon">◈</div>Repo<span>Lens</span></div>
+    <div class="header-right">
+      <div class="api-status"><div class="api-status-dot" id="apiDot"></div><span id="apiStatusText">Checking API...</span></div>
+      
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="hero-tag">✦ AI-powered code intelligence</div>
+    <h1>Understand any<br><span class="line2">GitHub repo instantly</span></h1>
+    <p>Paste a GitHub URL. Get a full AI-powered analysis, architecture breakdown, and an intelligent chat interface</p>
+  </div>
+
+  <div class="input-section">
+    <div class="input-wrapper">
+      <div class="input-prefix">github.com /</div>
+      <input type="text" id="repoUrl" placeholder="owner/repo  or  paste full URL" autocomplete="off" spellcheck="false" />
+      <button type="button" class="btn-analyse" id="analyseBtn">ANALYSE →</button>
+    </div>
+  </div>
+
+  <div class="example-repos">
+    <span class="example-label">try:</span>
+    <span class="example-pill" id="ex1">tiangolo/fastapi</span>
+    <span class="example-pill" id="ex2">pallets/flask</span>
+    <span class="example-pill" id="ex3">langchain-ai/langchain</span>
+  </div>
+
+  <div class="error-msg" id="errorMsg"><span>⚠</span><span id="errorText"></span></div>
+
+  <div class="loading" id="loading">
+    <div class="loading-card">
+      <div class="loading-header">
+        <div class="spinner"></div>
+        <div><div class="loading-title">Analysing repository...</div><div class="loading-subtitle" id="loadingSubtitle">Connecting to GitHub API</div></div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <ul class="loading-steps">
+        <li id="step1"><span class="step-icon">○</span> Fetching files from GitHub API</li>
+        <li id="step2"><span class="step-icon">○</span> Chunking and processing content</li>
+        <li id="step3"><span class="step-icon">○</span> Embedding into vector database</li>
+        <li id="step4"><span class="step-icon">○</span> Generating AI architecture summary</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="repo-info-bar">
+      <div class="repo-name"><span>◈</span><span id="repoNameText">—</span></div>
+      <div class="repo-actions">
+        <button type="button" class="btn-sm" id="copySessionBtn">Copy session ID</button>
+        <button type="button" class="btn-sm" id="newRepoBtn">✕ New repo</button>
+      </div>
+    </div>
+    <div class="stats-bar" id="statsBar"></div>
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left"><div class="panel-dot" style="background:var(--accent3);box-shadow:0 0 6px var(--accent3)"></div>KEY FILES</div>
+          <span class="panel-count" id="fileCount">0</span>
+        </div>
+        <div class="file-list" id="fileList"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left"><div class="panel-dot" style="background:var(--accent2);box-shadow:0 0 6px var(--accent2)"></div>REPO SUMMARY</div>
+        </div>
+        <div class="summary-content" id="summaryContent"></div>
+      </div>
+    </div>
+    <div class="chat-section">
+      <div class="chat-toolbar">
+        <div class="chat-toolbar-left">
+          <div class="panel-dot" style="background:var(--accent);box-shadow:0 0 6px var(--accent)"></div>
+          <div class="chat-toolbar-title">RAG CHAT</div>
+          <span class="msg-counter" id="msgCounter">0 messages</span>
+        </div>
+        <button type="button" class="btn-sm" id="clearChatBtn">Clear chat</button>
+      </div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-empty" id="chatEmpty">
+          <div class="chat-empty-icon">◈</div>
+          <h3>Repo analysed</h3>
+          <p>Ask anything about the codebase, architecture, or specific files.</p>
+        </div>
+      </div>
+      <div class="suggestions" id="suggestionsBar">
+        <span class="suggestion">What does this project do?</span>
+        <span class="suggestion">What's the tech stack?</span>
+        <span class="suggestion">How is the code structured?</span>
+        <span class="suggestion">What are potential issues?</span>
+        <span class="suggestion">How do I get started?</span>
+      </div>
+      <div class="chat-input-bar">
+        <div class="chat-input-inner">
+          <span class="input-prefix-icon">›</span>
+          <input type="text" id="chatInput" placeholder="Ask about this repo..." disabled oninput="updateCharCount()" />
+          <span class="char-count" id="charCount"></span>
+        </div>
+        <button type="button" class="btn-send" id="sendBtn" disabled>SEND</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    RepoLens · GitHub Analyser
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+<script src="script.js"></script>
+
+
+</body>
+</html>
