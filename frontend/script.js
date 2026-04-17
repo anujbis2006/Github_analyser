@@ -1,4 +1,3 @@
- 
   const DUMMY_USER = 'Pankaj';
   const DUMMY_PASS = 'Pankaj';
 
@@ -8,6 +7,12 @@
   const loginError    = document.getElementById('loginError');
   const loginErrorText = document.getElementById('loginErrorText');
   const signupError   = document.getElementById('signupError');
+
+  // Auto-skip login if user already logged in this browser session
+  if (sessionStorage.getItem('gh_logged_in') === 'true') {
+    authOverlay.style.display = 'none';
+    document.body.classList.remove('locked');
+  }
   const signupErrorText = document.getElementById('signupErrorText');
 
   function showAuthError(el, textEl, msg) {
@@ -26,7 +31,7 @@
   const pass = document.getElementById('loginPass').value;
 
   if (user === DUMMY_USER && pass === DUMMY_PASS) {
-    
+    sessionStorage.setItem('gh_logged_in', 'true');
     const authOverlay = document.getElementById('authOverlay');
     authOverlay.classList.add('slid-down');
 
@@ -195,9 +200,9 @@ document.getElementById('loginBtn').addEventListener('click', handleLogin);
       } catch (networkErr) {
         clearTimeout(timeoutId);
         if (networkErr.name === 'AbortError') {
-          throw new Error('Request timed out (5 min). Try a smaller repository.');
+          throw new Error('Request timed out. Try a smaller repository, or paste the same URL again — embeddings are cached and the second attempt will be instant.');
         }
-        throw new Error(`Cannot reach backend at ${API}. Is your server running?`);
+        throw new Error(`Cannot reach backend at ${API}. Make sure uvicorn is running on port 8000.`);
       }
 
       clearTimeout(timeoutId);
@@ -222,10 +227,10 @@ document.getElementById('loginBtn').addEventListener('click', handleLogin);
   }
 
   const STEPS = [
-    { id: 'step1', label: 'Fetching files from GitHub', progress: 20 },
-    { id: 'step2', label: 'Chunking and processing',    progress: 45 },
-    { id: 'step3', label: 'Embedding into ChromaDB',    progress: 72 },
-    { id: 'step4', label: 'Generating AI summary',      progress: 90 },
+    { id: 'step1', label: 'Fetching files from GitHub (first run may take 2–5 min)', progress: 20 },
+    { id: 'step2', label: 'Chunking and processing files',    progress: 45 },
+    { id: 'step3', label: 'Embedding into ChromaDB (heavy — only once per repo)',    progress: 72 },
+    { id: 'step4', label: 'Generating AI summary via Groq',      progress: 90 },
   ];
   let stepTimers = [];
 

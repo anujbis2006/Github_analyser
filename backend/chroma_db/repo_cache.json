@@ -1,0 +1,6 @@
+{
+  "https://github.com/anujbis2006/Github_analyser": "./chroma_db/Github_analyser",
+  "https://github.com/anujbis2006/Multimodel_fake_news": "./chroma_db/Multimodel_fake_news",
+  "https://github.com/anujbis2006/Resume-analyser": "./chroma_db/Resume-analyser",
+  "https://github.com/anujbis2006/TensorTonic-Solutions": "./chroma_db/TensorTonic-Solutions"
+}

@@ -12,11 +12,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
 
-from Github_analyser.backend.app.github_fetcher import fetch_repo_files
-from Github_analyser.backend.app.chunker import chunk_files
-from Github_analyser.backend.app.embedder import embed_and_store, load_existing
-from Github_analyser.backend.app.rag_chain import build_rag_chain, ask
-from Github_analyser.backend.app.summarizer import summarize_repo
+from app.github_fetcher import fetch_repo_files
+from app.chunker import chunk_files
+from app.embedder import embed_and_store, load_existing
+from app.rag_chain import build_rag_chain, ask
+from app.summarizer import summarize_repo
+from fastapi.middleware.cors import CORSMiddleware
 
 # Load environment variables
 load_dotenv()
