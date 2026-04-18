@@ -1,3 +1,7 @@
+langchain-google-genai 
+langchain-chroma 
+langchain-huggingface
+
 langchain==0.3.25
 langchain-core==0.3.63
 langchain-community==0.3.23

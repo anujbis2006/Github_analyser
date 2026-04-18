@@ -1,19 +1,19 @@
-  const DUMMY_USER = 'Pankaj';
+const DUMMY_USER = 'Pankaj';
   const DUMMY_PASS = 'Pankaj';
 
-  const authOverlay   = document.getElementById('authOverlay');
-  const loginPanel    = document.getElementById('loginPanel');
-  const signupPanel   = document.getElementById('signupPanel');
-  const loginError    = document.getElementById('loginError');
+  const authOverlay    = document.getElementById('authOverlay');
+  const loginPanel     = document.getElementById('loginPanel');
+  const signupPanel    = document.getElementById('signupPanel');
+  const loginError     = document.getElementById('loginError');
   const loginErrorText = document.getElementById('loginErrorText');
-  const signupError   = document.getElementById('signupError');
+  const signupError    = document.getElementById('signupError');
+  const signupErrorText = document.getElementById('signupErrorText');
 
-  // Auto-skip login if user already logged in this browser session
-  if (sessionStorage.getItem('gh_logged_in') === 'true') {
+  // FIX: Keep user logged in across page reloads (survives F5, accidental refresh)
+  if (sessionStorage.getItem('gh_logged_in') === '1') {
     authOverlay.style.display = 'none';
     document.body.classList.remove('locked');
   }
-  const signupErrorText = document.getElementById('signupErrorText');
 
   function showAuthError(el, textEl, msg) {
     textEl.textContent = msg;
@@ -31,21 +31,13 @@
   const pass = document.getElementById('loginPass').value;
 
   if (user === DUMMY_USER && pass === DUMMY_PASS) {
-    sessionStorage.setItem('gh_logged_in', 'true');
+    sessionStorage.setItem('gh_logged_in', '1');
     const authOverlay = document.getElementById('authOverlay');
     authOverlay.classList.add('slid-down');
-
-   
     document.body.classList.remove('locked');
-
-
-    setTimeout(() => {
-      authOverlay.style.display = 'none';
-    }, 800); 
-
+    setTimeout(() => { authOverlay.style.display = 'none'; }, 800);
   } else {
-    
-    showAuthError(loginError, loginErrorText, "Invalid ");
+    showAuthError(loginError, loginErrorText, "Invalid username or password");
   }
 }
 
@@ -185,31 +177,55 @@ document.getElementById('loginBtn').addEventListener('click', handleLogin);
     hideError(); setLoading(true); showResults(false);
     document.getElementById('analyseBtn').disabled = true;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1000000);
-
     try {
       let res;
       try {
         res = await fetch(`${API}/analyse`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-          signal: controller.signal
+          body: JSON.stringify({ url })
         });
       } catch (networkErr) {
-        clearTimeout(timeoutId);
-        if (networkErr.name === 'AbortError') {
-          throw new Error('Request timed out. Try a smaller repository, or paste the same URL again — embeddings are cached and the second attempt will be instant.');
-        }
         throw new Error(`Cannot reach backend at ${API}. Make sure uvicorn is running on port 8000.`);
       }
 
-      clearTimeout(timeoutId);
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        let detail = `Server error ${res.status}`;
+        try { detail = JSON.parse(text).detail || detail; } catch {}
+        throw new Error(detail);
+      }
 
-      const { ok, data, errorMsg } = await safeJson(res);
+      // Stream the ndjson response — each line is a progress update or the final result.
+      // This keeps the connection alive during the long first-run embedding step
+      // instead of the browser silently dropping it and showing "server error".
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let data = null;
 
-      if (!ok) throw new Error(errorMsg);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg;
+          try { msg = JSON.parse(line); } catch { continue; }
+
+          if (msg.status === 'progress') {
+            document.getElementById('loadingSubtitle').textContent = msg.msg;
+          } else if (msg.status === 'done') {
+            data = msg;
+          } else if (msg.status === 'error') {
+            throw new Error(msg.detail || 'Analysis failed on server.');
+          }
+        }
+      }
+
       if (!data) throw new Error('Server returned an empty response.');
       if (!data.session_id) throw new Error('Backend response missing session_id. Check server logs.');
 
@@ -227,10 +243,10 @@ document.getElementById('loginBtn').addEventListener('click', handleLogin);
   }
 
   const STEPS = [
-    { id: 'step1', label: 'Fetching files from GitHub (first run may take 2–5 min)', progress: 20 },
-    { id: 'step2', label: 'Chunking and processing files',    progress: 45 },
-    { id: 'step3', label: 'Embedding into ChromaDB (heavy — only once per repo)',    progress: 72 },
-    { id: 'step4', label: 'Generating AI summary via Groq',      progress: 90 },
+    { id: 'step1', label: 'Fetching files from GitHub', progress: 20 },
+    { id: 'step2', label: 'Chunking and processing',    progress: 45 },
+    { id: 'step3', label: 'Embedding into ChromaDB',    progress: 72 },
+    { id: 'step4', label: 'Generating AI summary',      progress: 90 },
   ];
   let stepTimers = [];
 
@@ -438,6 +454,12 @@ document.getElementById('loginBtn').addEventListener('click', handleLogin);
     setTimeout(()=>{ el.className='toast'; }, 3000);
   }
 
-  window.addEventListener('pagehide', e => { if (isAnalysing) { e.preventDefault(); e.returnValue=''; } });
+  // FIX: pagehide is not cancellable — beforeunload actually blocks the reload
+  window.addEventListener('beforeunload', e => {
+    if (isAnalysing) {
+      e.preventDefault();
+      e.returnValue = 'Analysis is running. Leave anyway?';
+    }
+  });
 
   checkApiHealth();

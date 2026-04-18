@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
@@ -17,7 +17,6 @@ from app.chunker import chunk_files
 from app.embedder import embed_and_store, load_existing
 from app.rag_chain import build_rag_chain, ask
 from app.summarizer import summarize_repo
-from fastapi.middleware.cors import CORSMiddleware
 
 # Load environment variables
 load_dotenv()
@@ -124,100 +123,110 @@ def root():
 
 @app.post("/analyse")
 async def analyse(request: AnalyseRequest):
-    try:
-        url = request.url.strip().replace(".git", "")
-        if not url.startswith("http"):
-            url = "https://github.com/" + url
+    """
+    Streams newline-delimited JSON so the browser connection never times out
+    during the long first-run embedding step.
 
-        repo_name = url.rstrip("/").split("/")[-1]
+    Each line is either:
+      {"status": "progress", "msg": "..."}   ← heartbeat (frontend ignores these)
+      {"status": "done", ...full result...}   ← final payload
+      {"status": "error", "detail": "..."}   ← error
+    """
+    import asyncio
+    import json as _json
+    import traceback
 
-        # ─── Cache Check ──────────────────────────────────
-        if url in repo_cache:
-            persist_dir = repo_cache[url]
+    async def stream():
+        try:
+            url = request.url.strip().replace(".git", "")
+            if not url.startswith("http"):
+                url = "https://github.com/" + url
+            repo_name = url.rstrip("/").split("/")[-1]
 
-            # Make sure the chroma folder still exists on disk
-            if os.path.exists(persist_dir):
-                logger.info(f"⚡ Cache hit — reloading embeddings from {persist_dir}")
-                vectorstore = load_existing(persist_dir)
-                cached = True
+            # ─── Cache Check ──────────────────────────────────
+            cached = False
+            files = None
+            vectorstore = None
 
-                # Still fetch files so we can regenerate the summary
-                logger.info("📦 Fetching files for summary (embeddings skipped)...")
+            if url in repo_cache:
+                persist_dir = repo_cache[url]
+                if os.path.exists(persist_dir):
+                    yield _json.dumps({"status": "progress", "msg": "Cache hit — loading existing embeddings"}) + "\n"
+                    await asyncio.sleep(0)
+                    vectorstore = load_existing(persist_dir)
+                    cached = True
+                    yield _json.dumps({"status": "progress", "msg": "Fetching files for summary..."}) + "\n"
+                    await asyncio.sleep(0)
+                    files = await fetch_repo_files(url)
+                    if not files:
+                        yield _json.dumps({"status": "error", "detail": "No readable files found in this repo"}) + "\n"
+                        return
+                else:
+                    del repo_cache[url]
+                    save_repo_cache(repo_cache)
+
+            # ─── Full Pipeline (cache miss) ───────────────────
+            if not cached:
+                yield _json.dumps({"status": "progress", "msg": "Fetching files from GitHub..."}) + "\n"
+                await asyncio.sleep(0)
                 files = await fetch_repo_files(url)
                 if not files:
-                    raise HTTPException(status_code=400, detail="No readable files found in this repo")
-                logger.info(f"✅ Fetched {len(files)} files (no re-embedding)")
+                    yield _json.dumps({"status": "error", "detail": "No readable files found in this repo"}) + "\n"
+                    return
 
-            else:
-                # Cache entry exists but folder was deleted — treat as cache miss
-                logger.warning(f"⚠️ Cache entry found but folder missing, re-embedding: {url}")
-                del repo_cache[url]
+                yield _json.dumps({"status": "progress", "msg": f"Fetched {len(files)} files. Chunking..."}) + "\n"
+                await asyncio.sleep(0)
+                chunks = chunk_files(files)
+                if not chunks:
+                    yield _json.dumps({"status": "error", "detail": "Could not create chunks from repo files"}) + "\n"
+                    return
+
+                yield _json.dumps({"status": "progress", "msg": f"Embedding {len(chunks)} chunks into ChromaDB (this takes 1-3 min on first run)..."}) + "\n"
+                await asyncio.sleep(0)
+
+                persist_dir = f"./chroma_db/{repo_name}"
+                loop = asyncio.get_event_loop()
+                vectorstore = await loop.run_in_executor(
+                    None, lambda: __import__('app.embedder', fromlist=['embed_and_store']).embed_and_store(chunks, persist_directory=persist_dir)
+                )
+                repo_cache[url] = persist_dir
                 save_repo_cache(repo_cache)
-                cached = False
 
-        # ─── Full Pipeline (cache miss) ───────────────────
-        if url not in repo_cache:
-            cached = False
-            logger.info(f"🔍 Cache miss — full analysis for: {url}")
+            yield _json.dumps({"status": "progress", "msg": "Generating AI summary..."}) + "\n"
+            await asyncio.sleep(0)
+            result = summarize_repo(files)
 
-            logger.info("📦 Fetching files from GitHub API...")
-            files = await fetch_repo_files(url)
-            if not files:
-                raise HTTPException(status_code=400, detail="No readable files found in this repo")
-            logger.info(f"✅ Fetched {len(files)} files")
+            session_id = str(uuid.uuid4())
+            chain = build_rag_chain(vectorstore)
+            sessions[session_id] = {
+                "chain": chain,
+                "repo_url": url,
+                "repo_slug": repo_name,
+                "created_at": datetime.utcnow().isoformat(),
+                "message_count": 0,
+                "files_fetched": len(files),
+                "chunks_created": len(files),
+                "from_cache": cached,
+            }
 
-            logger.info("✂️ Chunking files...")
-            chunks = chunk_files(files)
-            if not chunks:
-                raise HTTPException(status_code=400, detail="Could not create chunks from repo files")
-            logger.info(f"✅ Created {len(chunks)} chunks")
+            yield _json.dumps({
+                "status": "done",
+                "session_id": session_id,
+                "repo_url": url,
+                "files_fetched": len(files),
+                "chunks_created": sessions[session_id]["chunks_created"],
+                "from_cache": cached,
+                "priority_files": result["priority_files"],
+                "summary": result["summary"],
+                "created_at": sessions[session_id]["created_at"],
+            }) + "\n"
 
-            logger.info("🗄️ Embedding and storing in ChromaDB...")
-            # Stable path (no timestamp) so we can reload it later
-            persist_dir = f"./chroma_db/{repo_name}"
-            vectorstore = embed_and_store(chunks, persist_directory=persist_dir)
+        except Exception as e:
+            logger.error(f"❌ Analysis failed: {type(e).__name__}: {str(e)}")
+            logger.error(traceback.format_exc())
+            yield _json.dumps({"status": "error", "detail": f"Analysis failed: {str(e)}"}) + "\n"
 
-            # Save to cache registry
-            repo_cache[url] = persist_dir
-            save_repo_cache(repo_cache)
-            logger.info(f"✅ Embeddings stored and cached → {persist_dir}")
-
-        logger.info("🤖 Generating AI summary...")
-        result = summarize_repo(files)
-        logger.info("✅ Summary generated")
-
-        session_id = str(uuid.uuid4())
-        chain = build_rag_chain(vectorstore)
-        sessions[session_id] = {
-            "chain": chain,
-            "repo_url": url,
-            "repo_slug": repo_name,
-            "created_at": datetime.utcnow().isoformat(),
-            "message_count": 0,
-            "files_fetched": len(files),
-            "chunks_created": len(files),   # approximation when cached
-            "from_cache": cached,
-        }
-        logger.info(f"✅ Session created: {session_id} (cached={cached})")
-
-        return {
-            "session_id": session_id,
-            "repo_url": url,
-            "files_fetched": len(files),
-            "chunks_created": sessions[session_id]["chunks_created"],
-            "from_cache": cached,
-            "priority_files": result["priority_files"],
-            "summary": result["summary"],
-            "created_at": sessions[session_id]["created_at"],
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Analysis failed: {type(e).__name__}: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 @app.post("/chat")
